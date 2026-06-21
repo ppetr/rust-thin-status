@@ -8,9 +8,13 @@ use triomphe::ThinArc;
 
 /// Stores an `isize` as a tagged value inside a pointer. This means that one bit of `isize` isn't
 /// available, and therefore inly numbers within `IsizeInPtr::MIN` and `IsizeIntPtr::MAX` are
-/// convertible. This is expressed by `impl TryFrom<isize> for IsizeInPtr`.
+/// convertible.
+///
+/// To wrap `isize` into `IsizeInPtr` (if it fits), use `try_from` from
+/// `impl TryFrom<isize> for IsizeInPtr`.
 #[derive(Eq, PartialEq, Ord, PartialOrd, Clone, Copy, Debug)]
 pub struct IsizeInPtr {
+    /// As all numerical values are tagged by `TAG_MASK`, this is always non-zero.
     ptr: NonNull<c_void>,
 }
 
@@ -39,7 +43,8 @@ impl IsizeInPtr {
         }
     }
 
-    fn get(&self) -> isize {
+    /// Returns the wrapped value.
+    pub fn get(&self) -> isize {
         (self.ptr.as_ptr() as isize) >> 1
     }
 }
@@ -58,14 +63,14 @@ impl From<IsizeInPtr> for isize {
 }
 
 impl TryFrom<isize> for IsizeInPtr {
-    type Error = ();
+    type Error = TryFromIsizeError<isize>;
 
     /// Wrap a `value` if it fits inside `IsizeInPtr`.
     fn try_from(value: isize) -> Result<IsizeInPtr, Self::Error> {
         if (value <= Self::MAX) && (value >= Self::MIN) {
             Ok(Self::from_isize_unchecked(value))
         } else {
-            Err(())
+            Err(TryFromIsizeError { original: value })
         }
     }
 }
@@ -74,12 +79,12 @@ macro_rules! impl_try_from_for_integral {
     ($($t:ty),*) => {
         $(
             impl TryFrom<$t> for IsizeInPtr {
-                type Error = ();
+                type Error = TryFromIsizeError<$t>;
 
                 fn try_from(value: $t) -> Result<Self, Self::Error> {
-                    isize::try_from(value)
-                        .map_err(|_| ())
-                        .and_then(|n: isize| IsizeInPtr::try_from(n))
+                    isize::try_from(value).ok()
+                        .and_then(|n: isize| IsizeInPtr::try_from(n).ok())
+                        .ok_or(TryFromIsizeError{ original: value })
                 }
             }
         )*
@@ -87,12 +92,33 @@ macro_rules! impl_try_from_for_integral {
 }
 impl_try_from_for_integral!(i8, i16, i32, i64, i128);
 
+/// Returned when
+#[derive(Debug, Clone, Copy)]
+pub struct TryFromIsizeError<N> {
+    pub original: N,
+}
+
+impl<N: std::fmt::Display> std::fmt::Display for TryFromIsizeError<N> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(
+            f,
+            "Value {} doesn't fit inside taggeed isize bounds [{}, {}]",
+            self.original,
+            IsizeInPtr::MIN,
+            IsizeInPtr::MAX
+        )
+    }
+}
+
+impl<N: std::fmt::Display + std::fmt::Debug> std::error::Error for TryFromIsizeError<N> {}
+
 /// A type representing either a signed pointer-sized integer (`isize`) or
 /// a reference-counted pointer (`ThinArc<H, T>`).
 ///
 /// Optimized using `NonNull` so that `Option<ThinArcOrInt<H, T>>` takes up exactly
 /// the size of a single architecture pointer.
 pub struct ThinArcOrInt<H, T> {
+    /// As all numerical values are tagged by `TAG_MASK`, this is always non-zero.
     raw: NonNull<c_void>,
     _marker: PhantomData<ThinArc<H, T>>,
 }
@@ -126,10 +152,14 @@ impl<H, T> ThinArcOrInt<H, T> {
 
     /// Tries to convert a `value` using `try_into()` to `IsizeInPtr`. If it succeeds, stores it as
     /// an integer inside the internal pointer. Otherwise it's stored in `ThinArc` as `H`.
-    pub fn from_convertible<U: TryInto<IsizeInPtr, Error = H>>(value: U) -> Self {
+    pub fn from_convertible<U, E>(value: U) -> Self
+    where
+        U: TryInto<IsizeInPtr, Error = E>,
+        E: Into<H>,
+    {
         match value.try_into() {
             Ok(i) => Self::from_isize(i),
-            Err(h) => Self::from_arc(ThinArc::from_header_and_iter(h, std::iter::empty())),
+            Err(e) => Self::from_arc(ThinArc::from_header_and_iter(e.into(), std::iter::empty())),
         }
     }
 
@@ -156,12 +186,7 @@ impl<H, T> ThinArcOrInt<H, T> {
     }
 
     unsafe fn as_arc_internal(&self) -> &ThinArc<H, T> {
-        let ptr = &self.raw as *const NonNull<c_void> as *const ThinArc<H, T>;
-        &*ptr
-    }
-
-    unsafe fn take_arc_internal(&mut self) -> ThinArc<H, T> {
-        ThinArc::from_raw(self.raw.as_ptr() as *const c_void)
+        &*(&self.raw as *const NonNull<c_void> as *const ThinArc<H, T>)
     }
 }
 
@@ -174,7 +199,7 @@ impl<H, T> Default for ThinArcOrInt<H, T> {
 impl<H, T> Drop for ThinArcOrInt<H, T> {
     fn drop(&mut self) {
         if self.has_ref() {
-            let _arc = unsafe { self.take_arc_internal() };
+            let _arc = unsafe { ThinArc::<H, T>::from_raw(self.raw.as_ptr()) };
         }
     }
 }
