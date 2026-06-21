@@ -6,6 +6,87 @@ use std::marker::PhantomData;
 use std::ptr::NonNull;
 use triomphe::ThinArc;
 
+/// Stores an `isize` as a tagged value inside a pointer. This means that one bit of `isize` isn't
+/// available, and therefore inly numbers within `IsizeInPtr::MIN` and `IsizeIntPtr::MAX` are
+/// convertible. This is expressed by `impl TryFrom<isize> for IsizeInPtr`.
+#[derive(Eq, PartialEq, Ord, PartialOrd, Clone, Copy, Debug)]
+pub struct IsizeInPtr {
+    ptr: NonNull<c_void>,
+}
+
+impl IsizeInPtr {
+    /// Maximal value that can be stored.
+    pub const MAX: isize = isize::MAX >> 1;
+    pub const MIN: isize = isize::MIN >> 1;
+    const TAG_MASK: isize = 1;
+
+    fn from_ptr(ptr: *const c_void) -> Option<Self> {
+        if (ptr as isize & Self::TAG_MASK) == 0 {
+            None
+        } else {
+            Some(unsafe { Self::new_unchecked(ptr) })
+        }
+    }
+
+    fn from_isize_unchecked(value: isize) -> Self {
+        let tagged = (value << 1) | Self::TAG_MASK;
+        unsafe { Self::new_unchecked(tagged as *const c_void) }
+    }
+
+    unsafe fn new_unchecked(ptr: *const c_void) -> Self {
+        IsizeInPtr {
+            ptr: unsafe { NonNull::from_ref(&*ptr) },
+        }
+    }
+
+    fn get(&self) -> isize {
+        (self.ptr.as_ptr() as isize) >> 1
+    }
+}
+
+impl Default for IsizeInPtr {
+    fn default() -> Self {
+        Self::from_isize_unchecked(0)
+    }
+}
+
+impl From<IsizeInPtr> for isize {
+    /// Convert `value` back to `isize`.
+    fn from(value: IsizeInPtr) -> isize {
+        value.get()
+    }
+}
+
+impl TryFrom<isize> for IsizeInPtr {
+    type Error = ();
+
+    /// Wrap a `value` if it fits inside `IsizeInPtr`.
+    fn try_from(value: isize) -> Result<IsizeInPtr, Self::Error> {
+        if (value <= Self::MAX) && (value >= Self::MIN) {
+            Ok(Self::from_isize_unchecked(value))
+        } else {
+            Err(())
+        }
+    }
+}
+
+macro_rules! impl_try_from_for_integral {
+    ($($t:ty),*) => {
+        $(
+            impl TryFrom<$t> for IsizeInPtr {
+                type Error = ();
+
+                fn try_from(value: $t) -> Result<Self, Self::Error> {
+                    isize::try_from(value)
+                        .map_err(|_| ())
+                        .and_then(|n: isize| IsizeInPtr::try_from(n))
+                }
+            }
+        )*
+    };
+}
+impl_try_from_for_integral!(i8, i16, i32, i64, i128);
+
 /// A type representing either a signed pointer-sized integer (`isize`) or
 /// a reference-counted pointer (`ThinArc<H, T>`).
 ///
@@ -16,28 +97,14 @@ pub struct ThinArcOrInt<H, T> {
     _marker: PhantomData<ThinArc<H, T>>,
 }
 
-pub const THIN_ARC_OR_INT_MAX: isize = isize::MAX >> 1;
-pub const THIN_ARC_OR_INT_MIN: isize = isize::MIN >> 1;
-
 unsafe impl<H, T> Send for ThinArcOrInt<H, T> where ThinArc<H, T>: Send {}
 unsafe impl<H, T> Sync for ThinArcOrInt<H, T> where ThinArc<H, T>: Sync {}
 
 impl<H, T> ThinArcOrInt<H, T> {
-    const TAG_MASK: usize = 1;
-
     /// Constructs an instance from a signed integer.
-    ///
-    /// WARNING: The MSB of `val` is lost, as one bit in the internal representation is needed as a
-    /// tag bit.
-    pub fn from_isize(val: isize) -> Self {
-        // The value is bit-shifted left by 1 and the tag bit (LSB) is set to 1.
-        let encoded = ((val as usize) << 1) | Self::TAG_MASK;
-
-        // Safety: encoded is guaranteed to be non-zero because the LSB is set to 1.
-        let raw = unsafe { NonNull::new_unchecked(encoded as *mut c_void) };
-
+    pub fn from_isize(val: IsizeInPtr) -> Self {
         Self {
-            raw,
+            raw: val.ptr,
             _marker: PhantomData,
         }
     }
@@ -46,21 +113,28 @@ impl<H, T> ThinArcOrInt<H, T> {
     /// (Assumes the pointer is aligned and its LSB is 0.)
     pub fn from_arc(arc: ThinArc<H, T>) -> Self {
         let ptr = ThinArc::into_raw(arc);
-        let raw_usize = ptr as usize;
-
-        debug_assert_eq!(raw_usize & Self::TAG_MASK, 0, "Pointer must be aligned!");
-
+        debug_assert!(
+            IsizeInPtr::from_ptr(ptr).is_none(),
+            "Pointer must be 2-aligned!"
+        );
         // Safety: ThinArc allocations on the heap are never null.
-        let raw = unsafe { NonNull::new_unchecked(ptr as *mut c_void) };
-
         Self {
-            raw,
+            raw: unsafe { NonNull::from_ref(&*ptr) },
             _marker: PhantomData,
         }
     }
 
+    /// Tries to convert a `value` using `try_into()` to `IsizeInPtr`. If it succeeds, stores it as
+    /// an integer inside the internal pointer. Otherwise it's stored in `ThinArc` as `H`.
+    pub fn from_convertible<U: TryInto<IsizeInPtr, Error = H>>(value: U) -> Self {
+        match value.try_into() {
+            Ok(i) => Self::from_isize(i),
+            Err(h) => Self::from_arc(ThinArc::from_header_and_iter(h, std::iter::empty())),
+        }
+    }
+
     pub fn has_number(&self) -> bool {
-        (self.raw.as_ptr() as usize & Self::TAG_MASK) != 0
+        IsizeInPtr::from_ptr(self.raw.as_ptr()).is_some()
     }
 
     pub fn has_ref(&self) -> bool {
@@ -69,11 +143,7 @@ impl<H, T> ThinArcOrInt<H, T> {
 
     /// Returns the integer value if present, or `None` otherwise.
     pub fn as_isize(&self) -> Option<isize> {
-        if self.has_number() {
-            Some((self.raw.as_ptr() as isize) >> 1)
-        } else {
-            None
-        }
+        IsizeInPtr::from_ptr(self.raw.as_ptr()).map(|i| i.into())
     }
 
     /// Returns a shared reference to the `ThinArc` if present, or `None` otherwise.
@@ -97,7 +167,7 @@ impl<H, T> ThinArcOrInt<H, T> {
 
 impl<H, T> Default for ThinArcOrInt<H, T> {
     fn default() -> Self {
-        Self::from_isize(0)
+        Self::from_isize(Default::default())
     }
 }
 
@@ -166,7 +236,8 @@ where
     T: Ord,
 {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.partial_cmp(other).unwrap_or(Ordering::Equal)
+        self.partial_cmp(other)
+            .expect("ThinArc::partial_cmp returned `None`")
     }
 }
 
@@ -202,6 +273,12 @@ impl<H: fmt::Debug, T: fmt::Debug> fmt::Debug for ThinArcOrInt<H, T> {
 mod tests {
     use super::*;
 
+    fn from_isize(value: isize) -> ThinArcOrInt<(), ()> {
+        ThinArcOrInt::<(), ()>::from_isize(
+            IsizeInPtr::try_from(value).expect("Out of allowed bounds"),
+        )
+    }
+
     #[test]
     fn test_size() {
         assert_eq!(
@@ -234,28 +311,28 @@ mod tests {
             std::mem::size_of::<Option<ThinArcOrInt<(), String>>>(),
             std::mem::size_of::<usize>()
         );
-        assert_ne!(None, Some(ThinArcOrInt::<(), ()>::from_isize(0)));
+        assert_ne!(None, Some(from_isize(0)));
     }
 
     #[test]
     fn test_negative_numbers() {
-        let negative = ThinArcOrInt::<(), ()>::from_isize(-42);
+        let negative = from_isize(-42);
         assert!(negative.has_number());
         assert_eq!(negative.as_isize(), Some(-42));
     }
 
     #[test]
     fn test_max_number() {
-        let negative = ThinArcOrInt::<(), ()>::from_isize(THIN_ARC_OR_INT_MAX);
+        let negative = from_isize(IsizeInPtr::MAX);
         assert!(negative.has_number());
-        assert_eq!(negative.as_isize(), Some(THIN_ARC_OR_INT_MAX));
+        assert_eq!(negative.as_isize(), Some(IsizeInPtr::MAX));
     }
 
     #[test]
     fn test_min_number() {
-        let negative = ThinArcOrInt::<(), ()>::from_isize(THIN_ARC_OR_INT_MIN);
+        let negative = from_isize(IsizeInPtr::MIN);
         assert!(negative.has_number());
-        assert_eq!(negative.as_isize(), Some(THIN_ARC_OR_INT_MIN));
+        assert_eq!(negative.as_isize(), Some(IsizeInPtr::MIN));
     }
 
     #[test]

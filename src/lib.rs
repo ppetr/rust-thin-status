@@ -4,13 +4,21 @@ mod thin_arc_or_int;
 // use google_cloud_wkt::Any;
 use std::error::Error;
 use std::num::NonZeroI32;
-use thin_arc_or_int::ThinArcOrInt;
+use thin_arc_or_int::{IsizeInPtr, ThinArcOrInt};
 use triomphe::ThinArc;
 
 #[derive(Eq, PartialEq, Ord, PartialOrd, Clone, Copy, Debug)]
 struct FullStatus {
     code: NonZeroI32,
     // details: Vec<Any>,
+}
+
+impl TryFrom<FullStatus> for IsizeInPtr {
+    type Error = FullStatus;
+
+    fn try_from(value: FullStatus) -> Result<IsizeInPtr, FullStatus> {
+        value.code.get().try_into().map_err(|_| value)
+    }
 }
 
 #[derive(Eq, PartialEq, Ord, PartialOrd, Clone, Debug)]
@@ -20,32 +28,10 @@ pub struct ThinStatus {
     thin: ThinArcOrInt<FullStatus, u8>,
 }
 
-// TODO
 impl ThinStatus {
-    const MAX_THIN: NonZeroI32 = NonZeroI32::new(
-        if thin_arc_or_int::THIN_ARC_OR_INT_MAX as u64 <= i32::MAX as u64 {
-            thin_arc_or_int::THIN_ARC_OR_INT_MIN as i32
-        } else {
-            i32::MAX
-        },
-    )
-    .unwrap();
-
     pub fn from_code(code: NonZeroI32) -> Self {
-        if (code <= Self::MAX_THIN) && (code >= -Self::MAX_THIN) {
-            ThinStatus {
-                thin: ThinArcOrInt::from_isize(code.get() as isize),
-            }
-        } else {
-            ThinStatus {
-                thin: ThinArcOrInt::from_arc(ThinArc::from_header_and_slice(
-                    FullStatus {
-                        code: code,
-                        // details: Vec::new(),
-                    },
-                    b"",
-                )),
-            }
+        ThinStatus {
+            thin: ThinArcOrInt::from_convertible(FullStatus { code: code }),
         }
     }
 
@@ -55,10 +41,7 @@ impl ThinStatus {
         }
         ThinStatus {
             thin: ThinArcOrInt::from_arc(ThinArc::from_header_and_slice(
-                FullStatus {
-                    code: code,
-                    // details: Vec::new(),
-                },
+                FullStatus { code: code },
                 msg.as_bytes(),
             )),
         }
@@ -68,13 +51,9 @@ impl ThinStatus {
         match self.thin.as_isize() {
             Some(code) => unsafe { NonZeroI32::new_unchecked(code as i32) },
             None => {
-                (&self
-                    .thin
-                    .as_arc()
-                    .expect("ThinArcOrInt contains neither code nor arc"))
-                    .header
-                    .header
-                    .code
+                let val = &self.thin.as_arc();
+                let val = val.expect("ThinArcOrInt contains neither code nor arc");
+                val.header.header.code
             }
         }
     }
@@ -101,6 +80,15 @@ impl Error for ThinStatus {}
 mod thin_status_tests {
     use super::*;
 
+    /// Represents the maximal `i32` value that can be stored inside the integer variant of
+    /// `ThinArcOrInt`.
+    const MAX_THIN: NonZeroI32 = NonZeroI32::new(if IsizeInPtr::MAX as u64 <= i32::MAX as u64 {
+        IsizeInPtr::MAX as i32
+    } else {
+        i32::MAX
+    })
+    .unwrap();
+
     const fn non_zero(value: i32) -> NonZeroI32 {
         NonZeroI32::new(value).unwrap()
     }
@@ -117,13 +105,13 @@ mod thin_status_tests {
     #[test]
     fn test_from_code_within_max_thin() {
         // Values exactly at the boundary and within MAX_THIN should not allocate a ThinArc.
-        let status_pos = ThinStatus::from_code(ThinStatus::MAX_THIN);
-        assert_eq!(status_pos.code(), ThinStatus::MAX_THIN);
+        let status_pos = ThinStatus::from_code(MAX_THIN);
+        assert_eq!(status_pos.code(), MAX_THIN);
         assert_eq!(status_pos.message(), "");
         assert!(status_pos.thin.has_number());
 
-        let status_neg = ThinStatus::from_code(-ThinStatus::MAX_THIN);
-        assert_eq!(status_neg.code(), -ThinStatus::MAX_THIN);
+        let status_neg = ThinStatus::from_code(-MAX_THIN);
+        assert_eq!(status_neg.code(), -MAX_THIN);
         assert_eq!(status_neg.message(), "");
         assert!(status_neg.thin.has_number());
 
@@ -138,8 +126,8 @@ mod thin_status_tests {
     fn test_from_code_outside_max_thin() {
         // If MAX_THIN equals i32::MAX, testing values beyond the boundary
         // is not meaningful due to i32 overflow, so we check if it is smaller first.
-        if ThinStatus::MAX_THIN.get() < NonZeroI32::MAX.into() {
-            let larger: NonZeroI32 = non_zero(ThinStatus::MAX_THIN.get() + 1);
+        if MAX_THIN.get() < NonZeroI32::MAX.into() {
+            let larger: NonZeroI32 = non_zero(MAX_THIN.get() + 1);
             let status_overflow = ThinStatus::from_code(larger);
             assert_eq!(status_overflow.code(), larger);
             assert_eq!(status_overflow.message(), "");
@@ -156,7 +144,7 @@ mod thin_status_tests {
         assert_eq!(status_max.code(), NonZeroI32::MAX);
         let status_min = ThinStatus::from_code(NonZeroI32::MIN);
         assert_eq!(status_min.code(), NonZeroI32::MIN);
-        if ThinStatus::MAX_THIN.get() < NonZeroI32::MAX.into() {
+        if MAX_THIN.get() < NonZeroI32::MAX.into() {
             assert!(status_max.thin.has_ref());
             assert!(status_min.thin.has_ref());
         }
