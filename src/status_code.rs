@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#[cfg(feature = "use_libc")]
+use libc;
 use std::num::NonZeroI32;
 
 /// Derived from https://github.com/abseil/abseil-cpp/blob/master/absl/status/status.h (Copyright
@@ -169,6 +171,116 @@ pub enum ErrorCode {
     /// valid authentication credentials for the operation. Correct the authentication and try
     /// again.
     Unauthenticated = 16,
+}
+
+impl ErrorCode {
+    /// Adapted from `ErrnoToStatusCode` in
+    /// https://github.com/abseil/abseil-cpp/blob/master/absl/status/status.cc
+    #[cfg(feature = "use_libc")]
+    pub fn from_errno(errno: i32) -> Option<ErrorCode> {
+        match errno {
+            0 => None,
+            libc::EINVAL |        // Invalid argument
+                libc::ENAMETOOLONG |  // Filename too long
+                libc::E2BIG |         // Argument list too long
+                libc::EDESTADDRREQ |  // Destination address required
+                libc::EDOM |          // Mathematics argument out of domain of function
+                libc::EFAULT |        // Bad address
+                libc::EILSEQ |        // Illegal byte sequence
+                libc::ENOPROTOOPT |   // Protocol not available
+                libc::ENOTSOCK |      // Not a socket
+                libc::ENOTTY |        // Inappropriate I/O control operation
+                libc::EPROTOTYPE |    // Protocol wrong type for socket
+                libc::ESPIPE =>       // Invalid seek
+                Some(Self::InvalidArgument),
+            libc::ETIMEDOUT => // Connection timed out
+                Some(Self::DeadlineExceeded),
+            libc::ENODEV |  // No such device
+                libc::ENOENT |  // No such file or directory
+                libc::ENOMEDIUM |  // No medium found
+                libc::ENXIO |  // No such device or address
+                libc::ESRCH => // No such process
+                Some(Self::NotFound),
+            libc::EEXIST |         // File exists
+                libc::EADDRNOTAVAIL |  // Address not available
+                libc::EALREADY |       // Connection already in progress
+                libc::ENOTUNIQ => // Name not unique on network
+                Some(Self::AlreadyExists),
+            libc::EPERM |   // Operation not permitted
+                libc::EACCES |  // Permission denied
+                libc::ENOKEY |  // Required key not available
+                libc::EROFS => // Read only file system
+                Some(Self::PermissionDenied),
+            libc::ENOTEMPTY |   // Directory not empty
+                libc::EISDIR |      // Is a directory
+                libc::ENOTDIR |     // Not a directory
+                libc::EADDRINUSE |  // Address already in use
+                libc::EBADF |       // Invalid file descriptor
+                libc::EBADFD |  // File descriptor in bad state
+                libc::EBUSY |    // Device or resource busy
+                libc::ECHILD |   // No child processes
+                libc::EISCONN |  // Socket is connected
+                libc::EISNAM |  // Is a named type file
+                libc::ENOTBLK |  // Block device required
+                libc::ENOTCONN |  // The socket is not connected
+                libc::EPIPE |     // Broken pipe
+                libc::ESHUTDOWN |  // Cannot send after transport endpoint shutdown
+                libc::ETXTBSY |  // Text file busy
+                libc::EUNATCH => // Protocol driver not attached
+                Some(Self::FailedPrecondition),
+            libc::ENOSPC |  // No space left on device
+                libc::EDQUOT |  // Disk quota exceeded
+                libc::EMFILE |   // Too many open files
+                libc::EMLINK |   // Too many links
+                libc::ENFILE |   // Too many open files in system
+                libc::ENOBUFS |  // No buffer space available
+                libc::ENOMEM |   // Not enough space
+                libc::EUSERS => // Too many users
+                Some(Self::ResourceExhausted),
+            libc::ECHRNG |  // Channel number out of range
+                libc::EFBIG |      // File too large
+                libc::EOVERFLOW |  // Value too large to be stored in data type
+                libc::ERANGE =>    // Result too large
+                Some(Self::OutOfRange),
+            libc::ENOPKG |  // Package not installed
+                libc::ENOSYS |        // Function not implemented
+                libc::ENOTSUP |       // Operation not supported
+                libc::EAFNOSUPPORT |  // Address family not supported
+                libc::EPFNOSUPPORT |  // Protocol family not supported
+                libc::EPROTONOSUPPORT |  // Protocol not supported
+                libc::ESOCKTNOSUPPORT |  // Socket type not supported
+                libc::EXDEV => // Improper link
+                Some(Self::Unimplemented),
+            libc::EAGAIN |  // Resource temporarily unavailable
+                libc::ECOMM |  // Communication error on send
+                libc::ECONNREFUSED |  // Connection refused
+                libc::ECONNABORTED |  // Connection aborted
+                libc::ECONNRESET |    // Connection reset
+                libc::EINTR |         // Interrupted function call
+                libc::EHOSTDOWN |  // Host is down
+                libc::EHOSTUNREACH |  // Host is unreachable
+                libc::ENETDOWN |      // Network is down
+                libc::ENETRESET |     // Connection aborted by network
+                libc::ENETUNREACH |   // Network unreachable
+                libc::ENOLCK |        // No locks available
+                libc::ENOLINK |       // Link has been severed
+                libc::ENONET => // Machine is not on the network
+                Some(Self::Unavailable),
+            libc::EDEADLK |  // Resource deadlock avoided
+                libc::ESTALE => // Stale file handle
+                Some(Self::Aborted),
+            libc::ECANCELED =>  // Operation cancelled
+                Some(Self::Cancelled),
+            _ => Some(Self::Unknown),
+        }
+    }
+
+    /// If `err` contains a `raw_os_error()`, return it converted into an `ErrorCode`.
+    /// Otherwise returns `None`.
+    #[cfg(feature = "use_libc")]
+    pub fn from_raw_os_error(err: &std::io::Error) -> Option<ErrorCode> {
+        err.raw_os_error().and_then(Self::from_errno)
+    }
 }
 
 impl From<ErrorCode> for NonZeroI32 {
