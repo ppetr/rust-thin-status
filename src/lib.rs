@@ -15,16 +15,20 @@ mod status_code;
 mod thin_arc_or_int;
 
 // use google_cloud_rpc::model::Status;
-// use google_cloud_wkt::Any;
 use std::error::Error;
 use std::num::NonZeroI32;
 use thin_arc_or_int::{IsizeInPtr, ThinArcOrInt};
 use triomphe::ThinArc;
 
-#[derive(Eq, PartialEq, Ord, PartialOrd, Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
+#[cfg_attr(
+    not(feature = "use_any"),
+    derive(Copy, Eq, PartialEq, Ord, PartialOrd, Hash)
+)]
 struct FullStatus {
     code: NonZeroI32,
-    // details: Vec<Any>,
+    #[cfg(feature = "use_any")]
+    details: Vec<google_cloud_wkt::Any>,
 }
 
 impl TryFrom<FullStatus> for IsizeInPtr {
@@ -35,7 +39,8 @@ impl TryFrom<FullStatus> for IsizeInPtr {
     }
 }
 
-#[derive(Eq, PartialEq, Ord, PartialOrd, Clone, Debug)]
+#[derive(Clone, Debug)]
+#[cfg_attr(not(feature = "use_any"), derive(Eq, PartialEq, Ord, PartialOrd, Hash))]
 pub struct ThinStatus {
     // The wrapped `isize` integer is always non-zero.
     // The `&[u8]` is always in UTF-8.
@@ -49,7 +54,11 @@ impl ThinStatus {
 
     pub fn from_code(code: NonZeroI32) -> Self {
         ThinStatus {
-            thin: ThinArcOrInt::from_convertible(FullStatus { code: code }),
+            thin: ThinArcOrInt::from_convertible(FullStatus {
+                code: code,
+                #[cfg(feature = "use_any")]
+                details: Vec::new(),
+            }),
         }
     }
 
@@ -59,7 +68,11 @@ impl ThinStatus {
         }
         ThinStatus {
             thin: ThinArcOrInt::from_arc(ThinArc::from_header_and_slice(
-                FullStatus { code: code },
+                FullStatus {
+                    code: code,
+                    #[cfg(feature = "use_any")]
+                    details: Vec::new(),
+                },
                 msg.as_bytes(),
             )),
         }
@@ -82,13 +95,25 @@ impl ThinStatus {
             Some(arc) => unsafe { str::from_utf8_unchecked(&arc.slice) },
         }
     }
+
+    #[cfg(feature = "use_any")]
+    fn details(&self) -> &[google_cloud_wkt::Any] {
+        let &arc = &self.thin.as_arc();
+        arc.map_or::<&[google_cloud_wkt::Any], _>(&[], |t| &t.header.header.details)
+    }
 }
 
 impl std::fmt::Display for ThinStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // TODO: Use text status code when possible.
-        write!(f, "{}: {}", self.code(), self.message())
-        // TODO: Include optionally `AnyPayload` (probably in a different method).
+        write!(f, "{}: {}", self.code(), self.message())?;
+        #[cfg(feature = "use_any")] {
+            let details = self.details();
+            if !details.is_empty() {
+                write!(f, " {:?}",  &details)?;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -212,11 +237,13 @@ mod thin_status_tests {
         let status1 = ThinStatus::from_code_msg(non_zero(13), "Permission Denied");
         let status2 = status1.clone();
 
+        #[cfg(not(feature = "use_any"))]
         assert_eq!(status1, status2);
         assert_eq!(status1.code(), status2.code());
         assert_eq!(status1.message(), status2.message());
 
-        let status_different = ThinStatus::from_code(non_zero(13));
-        assert_ne!(status1, status_different);
+        let _status_different = ThinStatus::from_code(non_zero(13));
+        #[cfg(not(feature = "use_any"))]
+        assert_ne!(status1, _status_different);
     }
 }
