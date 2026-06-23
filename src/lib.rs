@@ -43,13 +43,17 @@ pub struct ThinStatus {
 }
 
 impl ThinStatus {
+    pub fn new(code: status_code::ErrorCode, msg: &str) -> Self {
+        Self::from_code_msg(code.into(), msg)
+    }
+
     pub fn from_code(code: NonZeroI32) -> Self {
         ThinStatus {
             thin: ThinArcOrInt::from_convertible(FullStatus { code: code }),
         }
     }
 
-    pub fn from_msg(code: NonZeroI32, msg: &str) -> Self {
+    pub fn from_code_msg(code: NonZeroI32, msg: &str) -> Self {
         if msg.is_empty() {
             return Self::from_code(code);
         }
@@ -92,10 +96,7 @@ impl Error for ThinStatus {}
 
 impl From<status_code::ErrorCode> for ThinStatus {
     fn from(code: status_code::ErrorCode) -> Self {
-        Self::from_code(NonZeroI32::new(code as i32).expect(&format!(
-            "The enum value of an ErrorCode must be nonzero, but got '{:?}'",
-            code
-        )))
+        Self::from_code(NonZeroI32::from(code))
     }
 }
 
@@ -132,6 +133,14 @@ mod thin_status_tests {
         assert_eq!(<NonZeroI32 as Into<i32>>::into(status.code()), 5);
         assert_eq!(status.message(), "");
         assert!(status.thin.has_number());
+    }
+
+    #[test]
+    fn test_from_error_code_and_message() {
+        let status = ThinStatus::new(status_code::ErrorCode::NotFound, "message");
+        assert_eq!(<NonZeroI32 as Into<i32>>::into(status.code()), 5);
+        assert_eq!(status.message(), "message");
+        assert!(status.thin.has_ref());
     }
 
     #[test]
@@ -183,16 +192,16 @@ mod thin_status_tests {
     }
 
     #[test]
-    fn test_from_msg() {
+    fn test_from_code_msg() {
         // Code within MAX_THIN but with a message -> must allocate a ThinArc.
-        let status_with_msg = ThinStatus::from_msg(non_zero(1), "Not Found");
+        let status_with_msg = ThinStatus::from_code_msg(non_zero(1), "Not Found");
         assert_eq!(status_with_msg.code(), non_zero(1));
         assert_eq!(status_with_msg.message(), "Not Found");
         assert!(status_with_msg.thin.has_ref());
         assert_eq!(format!("{}", status_with_msg), "1: Not Found");
 
         // Code within MAX_THIN with an empty message -> falls back to from_code (stored as a number).
-        let status_empty_msg = ThinStatus::from_msg(non_zero(1), "");
+        let status_empty_msg = ThinStatus::from_code_msg(non_zero(1), "");
         assert_eq!(status_empty_msg.code(), non_zero(1));
         assert_eq!(status_empty_msg.message(), "");
         assert!(status_empty_msg.thin.has_number());
@@ -200,7 +209,7 @@ mod thin_status_tests {
 
     #[test]
     fn test_clone_and_equality() {
-        let status1 = ThinStatus::from_msg(non_zero(13), "Permission Denied");
+        let status1 = ThinStatus::from_code_msg(non_zero(13), "Permission Denied");
         let status2 = status1.clone();
 
         assert_eq!(status1, status2);

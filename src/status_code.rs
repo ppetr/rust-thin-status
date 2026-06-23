@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::num::NonZeroI32;
+
 /// Derived from https://github.com/abseil/abseil-cpp/blob/master/absl/status/status.h (Copyright
 /// 2019 The Abseil Authors). See the link for more information.
 ///
@@ -167,4 +169,13 @@ pub enum ErrorCode {
     /// valid authentication credentials for the operation. Correct the authentication and try
     /// again.
     Unauthenticated = 16,
+}
+
+impl From<ErrorCode> for NonZeroI32 {
+    fn from(code: ErrorCode) -> Self {
+        NonZeroI32::new(code as i32).expect(&format!(
+            "The enum value of an ErrorCode must be nonzero, but got '{:?}'",
+            code
+        ))
+    }
 }
