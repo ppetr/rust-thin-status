@@ -11,6 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+mod status_code;
 mod thin_arc_or_int;
 
 // use google_cloud_rpc::model::Status;
@@ -89,6 +90,15 @@ impl std::fmt::Display for ThinStatus {
 
 impl Error for ThinStatus {}
 
+impl From<status_code::ErrorCode> for ThinStatus {
+    fn from(code: status_code::ErrorCode) -> Self {
+        Self::from_code(NonZeroI32::new(code as i32).expect(&format!(
+            "The enum value of an ErrorCode must be nonzero, but got '{:?}'",
+            code
+        )))
+    }
+}
+
 #[cfg(test)]
 mod thin_status_tests {
     use super::*;
@@ -113,6 +123,15 @@ mod thin_status_tests {
             std::mem::size_of::<ThinStatus>(),
             std::mem::size_of::<usize>()
         );
+    }
+
+    #[test]
+    fn test_from_error_code() {
+        // Values exactly at the boundary and within MAX_THIN should not allocate a ThinArc.
+        let status: ThinStatus = status_code::ErrorCode::NotFound.into();
+        assert_eq!(<NonZeroI32 as Into<i32>>::into(status.code()), 5);
+        assert_eq!(status.message(), "");
+        assert!(status.thin.has_number());
     }
 
     #[test]
