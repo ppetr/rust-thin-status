@@ -105,7 +105,7 @@ macro_rules! impl_try_from_for_integral {
 }
 impl_try_from_for_integral!(i8, i16, i32, i64, i128);
 
-/// Returned when
+/// Returned when a value is out of the range of `IsizeError`.
 #[derive(Debug, Clone, Copy)]
 pub struct TryFromIsizeError<N> {
     pub original: N,
