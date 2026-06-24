@@ -19,8 +19,8 @@ use triomphe::ThinArc;
 
 use crate::any_details::any::Details;
 use crate::builder;
-use crate::thin_arc_or_int::{IsizeInPtr, ThinArcOrInt};
 use crate::status_code;
+use crate::thin_arc_or_int::{IsizeInPtr, ThinArcOrInt};
 
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(not(feature = "use_any"), derive(Copy, Eq, PartialOrd, Ord, Hash))]
@@ -65,16 +65,30 @@ impl ThinStatus {
         }
     }
 
-    pub fn from_code(code: NonZeroI32) -> Self {
+    /// A utility function to create a status with just a raw code. If it fits, it'll be stored just
+    /// as a tagged integer inside an internal pointer.
+    pub fn from_code<C: Into<NonZeroI32>>(code: C) -> Self {
         ThinStatus {
             thin: ThinArcOrInt::from_convertible(FullStatus {
-                code: code,
+                code: code.into(),
                 details: Default::default(),
             }),
         }
     }
 
-    fn code(&self) -> NonZeroI32 {
+    /// Returns the stored error code, or `None` if the raw numerical value doesn't match any of the
+    /// `ErrorCode` values.
+    fn code(&self) -> Option<status_code::ErrorCode> {
+        self.code_raw().get().try_into().ok()
+    }
+
+    /// Convenience wrapper to `code()` that converts an unknown error to `ErrorCode::Unknown`.
+    fn code_or_unknown(&self) -> status_code::ErrorCode {
+        self.code().unwrap_or(status_code::ErrorCode::Unknown)
+    }
+
+    /// Returns the raw numerical error code.
+    fn code_raw(&self) -> NonZeroI32 {
         match self.thin.as_isize() {
             Some(code) => unsafe { NonZeroI32::new_unchecked(code as i32) },
             None => {
@@ -102,7 +116,7 @@ impl ThinStatus {
 impl std::fmt::Display for ThinStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // TODO: Use text status code when possible.
-        self.code().get().fmt(f)?;
+        self.code_raw().get().fmt(f)?;
         let msg = self.message();
         if !msg.is_empty() {
             write!(f, ": {}", msg)?;
@@ -153,10 +167,10 @@ mod thin_status_tests {
     }
 
     #[test]
-    fn test_from_error_code() {
+    fn test_from_error_code_raw() {
         // Values exactly at the boundary and within MAX_THIN should not allocate a ThinArc.
         let status: ThinStatus = status_code::ErrorCode::NotFound.into();
-        assert_eq!(<NonZeroI32 as Into<i32>>::into(status.code()), 5);
+        assert_eq!(<NonZeroI32 as Into<i32>>::into(status.code_raw()), 5);
         assert_eq!(status.message(), "");
         #[cfg(feature = "use_any")]
         assert_eq!(status.details(), &[]);
@@ -168,17 +182,21 @@ mod thin_status_tests {
     fn test_from_code_within_max_thin() {
         // Values exactly at the boundary and within MAX_THIN should not allocate a ThinArc.
         let status_pos = ThinStatus::from_code(MAX_THIN);
-        assert_eq!(status_pos.code(), MAX_THIN);
+        assert_eq!(status_pos.code_raw(), MAX_THIN);
         assert_eq!(status_pos.message(), "");
         assert!(status_pos.thin.has_number());
 
         let status_neg = ThinStatus::from_code(-MAX_THIN);
-        assert_eq!(status_neg.code(), -MAX_THIN);
+        assert_eq!(status_neg.code_raw(), -MAX_THIN);
+        assert_eq!(
+            status_neg.code_or_unknown(),
+            status_code::ErrorCode::Unknown
+        );
         assert_eq!(status_neg.message(), "");
         assert!(status_neg.thin.has_number());
 
         let status_normal = ThinStatus::from_code(non_zero(42));
-        assert_eq!(status_normal.code(), non_zero(42));
+        assert_eq!(status_normal.code_raw(), non_zero(42));
         assert_eq!(status_normal.message(), "");
         assert!(status_normal.thin.has_number());
     }
@@ -191,11 +209,11 @@ mod thin_status_tests {
         if MAX_THIN.get() < NonZeroI32::MAX.into() {
             let larger: NonZeroI32 = non_zero(MAX_THIN.get() + 1);
             let status_overflow = ThinStatus::from_code(larger);
-            assert_eq!(status_overflow.code(), larger);
+            assert_eq!(status_overflow.code_raw(), larger);
             assert_eq!(status_overflow.message(), "");
 
             let status_underflow = ThinStatus::from_code(-larger);
-            assert_eq!(status_underflow.code(), -larger);
+            assert_eq!(status_underflow.code_raw(), -larger);
             assert_eq!(status_underflow.message(), "");
             assert!(status_overflow.thin.has_ref());
             assert!(status_underflow.thin.has_ref());
@@ -203,9 +221,9 @@ mod thin_status_tests {
 
         // Extreme i32 values (these will surely exceed MAX_THIN if MAX_THIN is smaller).
         let status_max = ThinStatus::from_code(NonZeroI32::MAX);
-        assert_eq!(status_max.code(), NonZeroI32::MAX);
+        assert_eq!(status_max.code_raw(), NonZeroI32::MAX);
         let status_min = ThinStatus::from_code(NonZeroI32::MIN);
-        assert_eq!(status_min.code(), NonZeroI32::MIN);
+        assert_eq!(status_min.code_raw(), NonZeroI32::MIN);
         if MAX_THIN.get() < NonZeroI32::MAX.into() {
             assert!(status_max.thin.has_ref());
             assert!(status_min.thin.has_ref());
@@ -217,7 +235,9 @@ mod thin_status_tests {
         let mut builder = ThinStatus::builder(status_code::ErrorCode::NotFound);
         write!(builder, "message").expect("write! failed");
         let status = builder.build();
-        assert_eq!(<NonZeroI32 as Into<i32>>::into(status.code()), 5);
+        assert_eq!(<NonZeroI32 as Into<i32>>::into(status.code_raw()), 5);
+        assert_eq!(status.code(), Some(status_code::ErrorCode::NotFound));
+        assert_eq!(status.code_or_unknown(), status_code::ErrorCode::NotFound);
         assert_eq!(status.message(), "message");
         #[cfg(feature = "use_any")]
         assert_eq!(status.details(), &[]);
@@ -233,7 +253,7 @@ mod thin_status_tests {
         let status = ThinStatus::builder(status_code::ErrorCode::NotFound)
             .add_detail(detail.clone())
             .build();
-        assert_eq!(<NonZeroI32 as Into<i32>>::into(status.code()), 5);
+        assert_eq!(<NonZeroI32 as Into<i32>>::into(status.code_raw()), 5);
         assert_eq!(status.message(), "");
         assert_eq!(status.details(), vec![detail]);
         assert!(status.thin.has_ref());
@@ -251,7 +271,7 @@ mod thin_status_tests {
         let status2 = status1.clone();
 
         assert_eq!(status1, status2);
-        assert_eq!(status1.code(), status2.code());
+        assert_eq!(status1.code_raw(), status2.code_raw());
         assert_eq!(status1.message(), status2.message());
 
         let _status_different = ThinStatus::from_code(non_zero(13));
