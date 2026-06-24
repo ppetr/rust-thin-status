@@ -15,7 +15,6 @@
 // TODO: Add a feature for google_cloud_rpc::model::Status;
 use std::error::Error;
 use std::num::NonZeroI32;
-use triomphe::ThinArc;
 
 use crate::any_details::any::Details;
 use crate::builder;
@@ -24,16 +23,20 @@ use crate::thin_arc_or_int::{IsizeInPtr, ThinArcOrInt};
 
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(not(feature = "use_any"), derive(Copy, Eq, PartialOrd, Ord, Hash))]
-struct FullStatus {
-    code: NonZeroI32,
-    details: Details,
+pub(crate) struct FullStatus {
+    pub(crate) code: NonZeroI32,
+    pub(crate) details: Details,
 }
 
 impl TryFrom<FullStatus> for IsizeInPtr {
     type Error = FullStatus;
 
     fn try_from(value: FullStatus) -> Result<IsizeInPtr, FullStatus> {
-        value.code.get().try_into().map_err(|_| value)
+        if value.details.is_empty() {
+            value.code.get().try_into().map_err(|_| value)
+        } else {
+            Err(value)
+        }
     }
 }
 
@@ -46,22 +49,14 @@ pub struct ThinStatus {
 }
 
 impl ThinStatus {
+    /// Constructs a builder that allows convenient creation of `ThinStatus` instances.
     pub fn builder<'a, C: Into<NonZeroI32>>(code: C) -> builder::ThinStatusBuilder<'a> {
         builder::ThinStatusBuilder::new(code)
     }
 
     pub(crate) fn from_builder(builder: builder::ThinStatusBuilder) -> Self {
-        if builder.message.is_empty() && builder.details.is_empty() {
-            return Self::from_code(builder.code);
-        }
         ThinStatus {
-            thin: ThinArcOrInt::from_arc(ThinArc::from_header_and_slice(
-                FullStatus {
-                    code: builder.code,
-                    details: builder.details,
-                },
-                builder.message.as_bytes(),
-            )),
+            thin: ThinArcOrInt::from_convertible(builder.full, builder.message.as_bytes()),
         }
     }
 
@@ -69,26 +64,29 @@ impl ThinStatus {
     /// as a tagged integer inside an internal pointer.
     pub fn from_code<C: Into<NonZeroI32>>(code: C) -> Self {
         ThinStatus {
-            thin: ThinArcOrInt::from_convertible(FullStatus {
-                code: code.into(),
-                details: Default::default(),
-            }),
+            thin: ThinArcOrInt::from_convertible(
+                FullStatus {
+                    code: code.into(),
+                    details: Default::default(),
+                },
+                &[],
+            ),
         }
     }
 
     /// Returns the stored error code, or `None` if the raw numerical value doesn't match any of the
     /// `ErrorCode` values.
-    fn code(&self) -> Option<status_code::ErrorCode> {
+    pub fn code(&self) -> Option<status_code::ErrorCode> {
         self.code_raw().get().try_into().ok()
     }
 
     /// Convenience wrapper to `code()` that converts an unknown error to `ErrorCode::Unknown`.
-    fn code_or_unknown(&self) -> status_code::ErrorCode {
+    pub fn code_or_unknown(&self) -> status_code::ErrorCode {
         self.code().unwrap_or(status_code::ErrorCode::Unknown)
     }
 
     /// Returns the raw numerical error code.
-    fn code_raw(&self) -> NonZeroI32 {
+    pub fn code_raw(&self) -> NonZeroI32 {
         match self.thin.as_isize() {
             Some(code) => unsafe { NonZeroI32::new_unchecked(code as i32) },
             None => {
@@ -99,7 +97,7 @@ impl ThinStatus {
         }
     }
 
-    fn message(&self) -> &str {
+    pub fn message(&self) -> &str {
         match self.thin.as_arc() {
             None => "",
             Some(arc) => unsafe { str::from_utf8_unchecked(&arc.slice) },

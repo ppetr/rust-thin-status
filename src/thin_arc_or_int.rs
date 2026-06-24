@@ -20,11 +20,11 @@ use std::ptr::NonNull;
 use triomphe::ThinArc;
 
 /// Stores an `isize` as a tagged value inside a pointer. This means that one bit of `isize` isn't
-/// available, and therefore inly numbers within `IsizeInPtr::MIN` and `IsizeIntPtr::MAX` are
+/// available, and therefore only numbers within `IsizeInPtr::MIN` and `IsizeIntPtr::MAX` are
 /// convertible.
 ///
-/// To wrap `isize` into `IsizeInPtr` (if it fits), use `try_from` from
-/// `impl TryFrom<isize> for IsizeInPtr`.
+/// To wrap `isize` (or any other numerical `i..` type) into `IsizeInPtr` (if it fits), use
+/// `try_from` from `impl TryFrom<isize> for IsizeInPtr`.
 #[derive(Eq, PartialEq, Ord, PartialOrd, Clone, Copy, Debug)]
 pub struct IsizeInPtr {
     /// As all numerical values are tagged by `TAG_MASK`, this is always non-zero.
@@ -140,7 +140,8 @@ unsafe impl<H, T> Send for ThinArcOrInt<H, T> where ThinArc<H, T>: Send {}
 unsafe impl<H, T> Sync for ThinArcOrInt<H, T> where ThinArc<H, T>: Sync {}
 
 impl<H, T> ThinArcOrInt<H, T> {
-    /// Constructs an instance from a signed integer.
+    /// Constructs an instance from a signed integer that will be stored as a tagged value inside
+    /// this pointer.
     pub fn from_isize(val: IsizeInPtr) -> Self {
         Self {
             raw: val.ptr,
@@ -163,33 +164,44 @@ impl<H, T> ThinArcOrInt<H, T> {
         }
     }
 
-    /// Tries to convert a `value` using `try_into()` to `IsizeInPtr`. If it succeeds, stores it as
-    /// an integer inside the internal pointer. Otherwise it's stored in `ThinArc` as `H`.
-    pub fn from_convertible<U, E>(value: U) -> Self
+    /// If `slice` is empty, tries to convert a `value` using `try_into()` to `IsizeInPtr`. If it
+    /// succeeds, stores it as a tagged integer inside this pointer. Otherwise constructs a
+    /// `ThinArc` to hold everything.
+    pub fn from_convertible<U, E>(value: U, slice: &[T]) -> Self
     where
-        U: TryInto<IsizeInPtr, Error = E>,
+        U: TryInto<IsizeInPtr, Error = E> + Into<H>,
         E: Into<H>,
+        T: Copy,
     {
-        match value.try_into() {
-            Ok(i) => Self::from_isize(i),
-            Err(e) => Self::from_arc(ThinArc::from_header_and_iter(e.into(), std::iter::empty())),
+        if slice.is_empty() {
+            match value.try_into() {
+                Ok(i) => Self::from_isize(i),
+                Err(e) => {
+                    Self::from_arc(ThinArc::from_header_and_iter(e.into(), std::iter::empty()))
+                }
+            }
+        } else {
+            Self::from_arc(ThinArc::from_header_and_slice(value.into(), slice))
         }
     }
 
+    /// Returns `true` iff this instance holds a number as a tagged value inside this pointer, that
+    /// is, without any memory allocation.
     pub fn has_number(&self) -> bool {
-        IsizeInPtr::from_ptr(self.raw.as_ptr()).is_some()
+        self.as_isize().is_some()
     }
 
+    /// Returns `true` iff this instance holds real pointer to a `ThinArc<H, T>` value.
     pub fn has_ref(&self) -> bool {
         !self.has_number()
     }
 
-    /// Returns the integer value if present, or `None` otherwise.
+    /// Returns the tagged integer value inside this pointer if present, or `None` otherwise.
     pub fn as_isize(&self) -> Option<isize> {
         IsizeInPtr::from_ptr(self.raw.as_ptr()).map(|i| i.into())
     }
 
-    /// Returns a shared reference to the `ThinArc` if present, or `None` otherwise.
+    /// Returns a shared reference to a `ThinArc<H, T>` if present, or `None` otherwise.
     pub fn as_arc(&self) -> Option<&ThinArc<H, T>> {
         if self.has_ref() {
             unsafe { Some(self.as_arc_internal()) }

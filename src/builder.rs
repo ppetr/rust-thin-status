@@ -15,26 +15,26 @@ use std::borrow::Cow;
 use std::fmt;
 use std::num::NonZeroI32;
 
-use crate::any_details::any::Details;
-use crate::ThinStatus;
+use crate::{FullStatus, ThinStatus};
 
 pub struct ThinStatusBuilder<'a> {
-    pub(crate) code: NonZeroI32,
+    pub(crate) full: FullStatus,
     pub(crate) message: Cow<'a, str>,
-    pub(crate) details: Details,
 }
 
 impl<'a> ThinStatusBuilder<'a> {
     pub fn new<C: Into<NonZeroI32>>(code: C) -> Self {
         Self {
-            code: code.into(),
+            full: FullStatus {
+                code: code.into(),
+                details: Default::default(),
+            },
             message: Cow::Borrowed(""),
-            details: Default::default(),
         }
     }
 
     pub fn code<C: Into<NonZeroI32>>(mut self, code: C) -> Self {
-        self.code = code.into();
+        self.full.code = code.into();
         self
     }
 
@@ -45,13 +45,13 @@ impl<'a> ThinStatusBuilder<'a> {
 
     #[cfg(feature = "use_any")]
     pub fn add_detail(mut self, detail: google_cloud_wkt::Any) -> Self {
-        self.details.details.push(detail);
+        self.full.details.details.push(detail);
         self
     }
 
     #[cfg(feature = "use_any")]
     pub fn details(mut self, details: Vec<google_cloud_wkt::Any>) -> Self {
-        self.details.details = details;
+        self.full.details.details = details;
         self
     }
 

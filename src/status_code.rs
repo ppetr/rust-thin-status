@@ -23,7 +23,21 @@ use strum;
 /// (Copyright 2019 The Abseil Authors.)
 ///
 /// Unlike `absl::StatusCode`, this enum only allows representing non-OK values.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, strum::EnumString, strum::EnumIter, strum::FromRepr, strum::IntoStaticStr, strum::VariantArray)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+    strum::EnumString,
+    strum::EnumIter,
+    strum::FromRepr,
+    strum::IntoStaticStr,
+    strum::VariantArray,
+)]
 #[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
 #[repr(i32)]
 #[non_exhaustive]
