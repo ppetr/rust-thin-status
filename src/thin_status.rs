@@ -113,8 +113,12 @@ impl ThinStatus {
 
 impl std::fmt::Display for ThinStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // TODO: Use text status code when possible.
-        self.code_raw().get().fmt(f)?;
+        let code = self.code_raw().get();
+        if let Some(error_code) = <i32 as TryInto<status_code::ErrorCode>>::try_into(code).ok() {
+            error_code.fmt(f)?;
+        } else {
+            code.fmt(f)?;
+        }
         let msg = self.message();
         if !msg.is_empty() {
             write!(f, ": {}", msg)?;
@@ -173,7 +177,7 @@ mod thin_status_tests {
         #[cfg(feature = "use_any")]
         assert_eq!(status.details(), &[]);
         assert!(status.thin.has_number());
-        assert_eq!(format!("{}", status), "5");
+        assert_eq!(format!("{}", status), "NOT_FOUND");
     }
 
     #[test]
@@ -240,7 +244,7 @@ mod thin_status_tests {
         #[cfg(feature = "use_any")]
         assert_eq!(status.details(), &[]);
         assert!(status.thin.has_ref());
-        assert_eq!(format!("{}", status), "5: message");
+        assert_eq!(format!("{}", status), "NOT_FOUND: message");
     }
 
     #[cfg(feature = "use_any")]
@@ -256,7 +260,7 @@ mod thin_status_tests {
         assert_eq!(status.details(), vec![detail]);
         assert!(status.thin.has_ref());
         let formatted = format!("{}", status);
-        assert!(formatted.starts_with("5 [Any("));
+        assert!(formatted.starts_with("NOT_FOUND [Any("));
         assert!(formatted.contains("type.googleapis.com/google.protobuf.Duration"));
         assert!(formatted.contains("123"));
     }

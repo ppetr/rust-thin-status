@@ -32,6 +32,7 @@ use strum;
     Ord,
     PartialEq,
     PartialOrd,
+    strum::Display,
     strum::EnumString,
     strum::EnumIter,
     strum::FromRepr,
