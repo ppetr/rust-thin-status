@@ -21,6 +21,8 @@ use crate::builder;
 use crate::status_code;
 use crate::thin_arc_or_int::{IsizeInPtr, ThinArcOrInt};
 
+/// Holds a status code, and if enabled by feature `use_any`, also a list of `google_cloud_wkt.Any`
+/// instances that can provide structured details.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(not(feature = "use_any"), derive(Copy, Eq, PartialOrd, Ord, Hash))]
 pub(crate) struct FullStatus {
@@ -28,6 +30,11 @@ pub(crate) struct FullStatus {
     pub(crate) details: Details,
 }
 
+/// Coverts `FullStatus` to a code embedded inside a pointer as a tagged integer if:
+/// - There are no `google_cloud_wkt.Any` details attached.
+/// - The integer fits in `IsizeInPtr`.
+///
+/// Otherwise returns the very same instance.
 impl TryFrom<FullStatus> for IsizeInPtr {
     type Error = FullStatus;
 
@@ -40,6 +47,16 @@ impl TryFrom<FullStatus> for IsizeInPtr {
     }
 }
 
+/// Holds a status code (in most cases `ErrorCode`), a descriptive string message, and optionally
+/// (if enabled by feature `use_any`) also `[google_cloud_wkt::Any]`.
+///
+/// It occupies only a single pointer word, which either wraps a tagged integer code (if there is
+/// neither message nor details), or a `ThinArc` pointer that holds a more complex value.
+/// Furthermore its representation is never `nullptr`, therefore `Option<ThinStatus>` and
+/// `Result<(), ThinStatus>` occupy just a single memory word.
+///
+/// Note that `Copy`, `Eq`, `PartialOrd` and `Hash` are only provided (derived) when feature
+/// `use_any` is disabled, since the `Any` datatype doesn't provide them.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(not(feature = "use_any"), derive(Eq, PartialOrd, Ord, Hash))]
 pub struct ThinStatus {
@@ -54,6 +71,9 @@ impl ThinStatus {
         builder::ThinStatusBuilder::new(code)
     }
 
+    /// Converts a builder into a new instance.
+    ///
+    /// This involves at most one heap allocation (if there is a message and/or `google_cloud_wkt.Any`.
     pub(crate) fn from_builder(builder: builder::ThinStatusBuilder) -> Self {
         ThinStatus {
             thin: ThinArcOrInt::from_convertible(builder.full, builder.message.as_bytes()),
@@ -97,6 +117,7 @@ impl ThinStatus {
         }
     }
 
+    /// Returns the message attached to the status (if any).
     pub fn message(&self) -> &str {
         match self.thin.as_arc() {
             None => "",
@@ -104,6 +125,7 @@ impl ThinStatus {
         }
     }
 
+    /// Returns the list of `google_cloud_wkt::Any` objects attached to the status.
     #[cfg(feature = "use_any")]
     pub fn details(&self) -> &[google_cloud_wkt::Any] {
         let &arc = &self.thin.as_arc();
@@ -114,7 +136,7 @@ impl ThinStatus {
 impl std::fmt::Display for ThinStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let code = self.code_raw().get();
-        if let Some(error_code) = <i32 as TryInto<status_code::ErrorCode>>::try_into(code).ok() {
+        if let Some(error_code) = status_code::ErrorCode::try_from(code).ok() {
             error_code.fmt(f)?;
         } else {
             code.fmt(f)?;
