@@ -11,6 +11,8 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+mod any_details;
+mod builder;
 mod status_code;
 mod thin_arc_or_int;
 
@@ -20,15 +22,13 @@ use std::num::NonZeroI32;
 use thin_arc_or_int::{IsizeInPtr, ThinArcOrInt};
 use triomphe::ThinArc;
 
-#[derive(Clone, Debug)]
-#[cfg_attr(
-    not(feature = "use_any"),
-    derive(Copy, Eq, PartialEq, Ord, PartialOrd, Hash)
-)]
+use crate::any_details::any::Details;
+
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(not(feature = "use_any"), derive(Copy, Eq, PartialOrd, Ord, Hash))]
 struct FullStatus {
     code: NonZeroI32,
-    #[cfg(feature = "use_any")]
-    details: Vec<google_cloud_wkt::Any>,
+    details: Details,
 }
 
 impl TryFrom<FullStatus> for IsizeInPtr {
@@ -39,8 +39,8 @@ impl TryFrom<FullStatus> for IsizeInPtr {
     }
 }
 
-#[derive(Clone, Debug)]
-#[cfg_attr(not(feature = "use_any"), derive(Eq, PartialEq, Ord, PartialOrd, Hash))]
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(not(feature = "use_any"), derive(Eq, PartialOrd, Ord, Hash))]
 pub struct ThinStatus {
     // The wrapped `isize` integer is always non-zero.
     // The `&[u8]` is always in UTF-8.
@@ -48,33 +48,31 @@ pub struct ThinStatus {
 }
 
 impl ThinStatus {
-    pub fn new(code: status_code::ErrorCode, msg: &str) -> Self {
-        Self::from_code_msg(code.into(), msg)
+    pub fn builder<'a, C: Into<NonZeroI32>>(code: C) -> builder::ThinStatusBuilder<'a> {
+        builder::ThinStatusBuilder::new(code)
+    }
+
+    pub(crate) fn from_builder(builder: builder::ThinStatusBuilder) -> Self {
+        if builder.message.is_empty() && builder.details.is_empty() {
+            return Self::from_code(builder.code);
+        }
+        ThinStatus {
+            thin: ThinArcOrInt::from_arc(ThinArc::from_header_and_slice(
+                FullStatus {
+                    code: builder.code,
+                    details: builder.details,
+                },
+                builder.message.as_bytes(),
+            )),
+        }
     }
 
     pub fn from_code(code: NonZeroI32) -> Self {
         ThinStatus {
             thin: ThinArcOrInt::from_convertible(FullStatus {
                 code: code,
-                #[cfg(feature = "use_any")]
-                details: Vec::new(),
+                details: Default::default(),
             }),
-        }
-    }
-
-    pub fn from_code_msg(code: NonZeroI32, msg: &str) -> Self {
-        if msg.is_empty() {
-            return Self::from_code(code);
-        }
-        ThinStatus {
-            thin: ThinArcOrInt::from_arc(ThinArc::from_header_and_slice(
-                FullStatus {
-                    code: code,
-                    #[cfg(feature = "use_any")]
-                    details: Vec::new(),
-                },
-                msg.as_bytes(),
-            )),
         }
     }
 
@@ -97,20 +95,24 @@ impl ThinStatus {
     }
 
     #[cfg(feature = "use_any")]
-    fn details(&self) -> &[google_cloud_wkt::Any] {
+    pub fn details(&self) -> &[google_cloud_wkt::Any] {
         let &arc = &self.thin.as_arc();
-        arc.map_or::<&[google_cloud_wkt::Any], _>(&[], |t| &t.header.header.details)
+        arc.map_or::<&[google_cloud_wkt::Any], _>(&[], |t| &t.header.header.details.get())
     }
 }
 
 impl std::fmt::Display for ThinStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // TODO: Use text status code when possible.
-        write!(f, "{}: {}", self.code(), self.message())?;
-        #[cfg(feature = "use_any")] {
-            let details = self.details();
-            if !details.is_empty() {
-                write!(f, " {:?}",  &details)?;
+        self.code().get().fmt(f)?;
+        let msg = self.message();
+        if !msg.is_empty() {
+            write!(f, ": {}", msg)?;
+        }
+        #[cfg(feature = "use_any")]
+        {
+            if let Some(t) = &self.thin.as_arc() {
+                t.header.header.details.fmt(f)?;
             }
         }
         Ok(())
@@ -128,6 +130,7 @@ impl From<status_code::ErrorCode> for ThinStatus {
 #[cfg(test)]
 mod thin_status_tests {
     use super::*;
+    use std::fmt::Write;
 
     /// Represents the maximal `i32` value that can be stored inside the integer variant of
     /// `ThinArcOrInt`.
@@ -157,15 +160,10 @@ mod thin_status_tests {
         let status: ThinStatus = status_code::ErrorCode::NotFound.into();
         assert_eq!(<NonZeroI32 as Into<i32>>::into(status.code()), 5);
         assert_eq!(status.message(), "");
+        #[cfg(feature = "use_any")]
+        assert_eq!(status.details(), &[]);
         assert!(status.thin.has_number());
-    }
-
-    #[test]
-    fn test_from_error_code_and_message() {
-        let status = ThinStatus::new(status_code::ErrorCode::NotFound, "message");
-        assert_eq!(<NonZeroI32 as Into<i32>>::into(status.code()), 5);
-        assert_eq!(status.message(), "message");
-        assert!(status.thin.has_ref());
+        assert_eq!(format!("{}", status), "5");
     }
 
     #[test]
@@ -217,33 +215,48 @@ mod thin_status_tests {
     }
 
     #[test]
-    fn test_from_code_msg() {
-        // Code within MAX_THIN but with a message -> must allocate a ThinArc.
-        let status_with_msg = ThinStatus::from_code_msg(non_zero(1), "Not Found");
-        assert_eq!(status_with_msg.code(), non_zero(1));
-        assert_eq!(status_with_msg.message(), "Not Found");
-        assert!(status_with_msg.thin.has_ref());
-        assert_eq!(format!("{}", status_with_msg), "1: Not Found");
+    fn test_from_error_code_and_message() {
+        let mut builder = ThinStatus::builder(status_code::ErrorCode::NotFound);
+        write!(builder, "message").expect("write! failed");
+        let status = builder.build();
+        assert_eq!(<NonZeroI32 as Into<i32>>::into(status.code()), 5);
+        assert_eq!(status.message(), "message");
+        #[cfg(feature = "use_any")]
+        assert_eq!(status.details(), &[]);
+        assert!(status.thin.has_ref());
+        assert_eq!(format!("{}", status), "5: message");
+    }
 
-        // Code within MAX_THIN with an empty message -> falls back to from_code (stored as a number).
-        let status_empty_msg = ThinStatus::from_code_msg(non_zero(1), "");
-        assert_eq!(status_empty_msg.code(), non_zero(1));
-        assert_eq!(status_empty_msg.message(), "");
-        assert!(status_empty_msg.thin.has_number());
+    #[cfg(feature = "use_any")]
+    #[test]
+    fn test_with_details() {
+        let detail =
+            google_cloud_wkt::Any::from_msg(&google_cloud_wkt::Duration::clamp(123, 456)).unwrap();
+        let status = ThinStatus::builder(status_code::ErrorCode::NotFound)
+            .add_detail(detail.clone())
+            .build();
+        assert_eq!(<NonZeroI32 as Into<i32>>::into(status.code()), 5);
+        assert_eq!(status.message(), "");
+        assert_eq!(status.details(), vec![detail]);
+        assert!(status.thin.has_ref());
+        let formatted = format!("{}", status);
+        assert!(formatted.starts_with("5 [Any("));
+        assert!(formatted.contains("type.googleapis.com/google.protobuf.Duration"));
+        assert!(formatted.contains("123"));
     }
 
     #[test]
     fn test_clone_and_equality() {
-        let status1 = ThinStatus::from_code_msg(non_zero(13), "Permission Denied");
+        let status1 = ThinStatus::builder(non_zero(13))
+            .message("Permission Denied")
+            .build();
         let status2 = status1.clone();
 
-        #[cfg(not(feature = "use_any"))]
         assert_eq!(status1, status2);
         assert_eq!(status1.code(), status2.code());
         assert_eq!(status1.message(), status2.message());
 
         let _status_different = ThinStatus::from_code(non_zero(13));
-        #[cfg(not(feature = "use_any"))]
         assert_ne!(status1, _status_different);
     }
 }
