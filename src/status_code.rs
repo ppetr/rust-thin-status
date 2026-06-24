@@ -15,12 +15,16 @@
 #[cfg(feature = "use_libc")]
 use libc;
 use std::num::NonZeroI32;
+use strum;
 
-/// Derived from https://github.com/abseil/abseil-cpp/blob/master/absl/status/status.h (Copyright
-/// 2019 The Abseil Authors). See the link for more information.
+/// Derived from <https://github.com/abseil/abseil-cpp/blob/master/absl/status/status.h>. See the
+/// link for more information.
 ///
-/// Unlike `absl::StatusCode`, this only allows representing non-OK values.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+/// (Copyright 2019 The Abseil Authors.)
+///
+/// Unlike `absl::StatusCode`, this enum only allows representing non-OK values.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, strum::EnumString, strum::EnumIter, strum::FromRepr, strum::IntoStaticStr, strum::VariantArray)]
+#[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
 #[repr(i32)]
 #[non_exhaustive]
 pub enum ErrorCode {
@@ -175,7 +179,7 @@ pub enum ErrorCode {
 
 impl ErrorCode {
     /// Adapted from `ErrnoToStatusCode` in
-    /// https://github.com/abseil/abseil-cpp/blob/master/absl/status/status.cc
+    /// <https://github.com/abseil/abseil-cpp/blob/master/absl/status/status.cc>
     #[cfg(feature = "use_libc")]
     pub fn from_errno(errno: i32) -> Option<ErrorCode> {
         match errno {
@@ -289,5 +293,17 @@ impl From<ErrorCode> for NonZeroI32 {
             "The enum value of an ErrorCode must be nonzero, but got '{:?}'",
             code
         ))
+    }
+}
+
+/// If a value matches one of the defined error codes, returns it as an `ErrorCode`, otherwise
+/// returns a `()` error.
+///
+/// For converting from strings, use the `std::str::FromStr` instance.
+impl TryFrom<i32> for ErrorCode {
+    type Error = ();
+
+    fn try_from(code: i32) -> Result<Self, ()> {
+        Self::from_repr(code).ok_or(())
     }
 }
