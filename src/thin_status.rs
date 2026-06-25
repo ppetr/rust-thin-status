@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// TODO: Add a feature for google_cloud_rpc::model::Status;
 #[cfg(feature = "use_cloud_rpc")]
 use google_cloud_rpc::model as cloud_rpc;
 use std::error::Error;
