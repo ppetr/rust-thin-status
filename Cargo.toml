@@ -20,7 +20,7 @@ license-file = "LICENSE"
 description = "Low-overhead, production-grade error status type for Rust, heavily inspired by Abseil's absl::Status"
 readme = "README.md"
 homepage = "https://github.com/ppetr/rust-thin-status"
-keywords = ["status", "error", "rpc", "grpc", "allocation", "optimization"]
+keywords = ["status", "error", "rpc", "grpc", "optimization"]
 categories = ["asynchronous", "network-programming", "rust-patterns"]
 
 [dependencies]
