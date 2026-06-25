@@ -130,6 +130,9 @@ impl<N: std::fmt::Display + std::fmt::Debug> std::error::Error for TryFromIsizeE
 ///
 /// Optimized using `NonNull` so that `Option<ThinArcOrInt<H, T>>` takes up exactly
 /// the size of a single architecture pointer.
+///
+/// This is a **general purpose class**, independent from the rest of this crate and can be used for
+/// purposes unrelated to error handling.
 pub struct ThinArcOrInt<H, T> {
     /// As all numerical values are tagged by `TAG_MASK`, this is always non-zero.
     raw: NonNull<c_void>,
