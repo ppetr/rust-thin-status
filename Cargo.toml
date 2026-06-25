@@ -13,10 +13,10 @@
 # limitations under the License.
 [package]
 name = "thin-status"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 publish = true
-license-file = "LICENSE"
+license = "Apache-2.0"
 description = "Low-overhead, production-grade error status type for Rust, heavily inspired by Abseil's absl::Status"
 readme = "README.md"
 homepage = "https://github.com/ppetr/rust-thin-status"
