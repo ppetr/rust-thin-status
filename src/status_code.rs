@@ -290,3 +290,18 @@ impl TryFrom<i32> for ErrorCode {
         Self::from_repr(code).ok_or(())
     }
 }
+
+#[cfg(test)]
+mod thin_status_tests {
+    use super::*;
+
+    #[cfg(feature = "use_libc")]
+    #[test]
+    fn test_cloud_rpc_status_conversions() {
+        assert_eq!(ErrorCode::from_errno(0), None);
+        assert_eq!(
+            ErrorCode::from_errno(libc::ENOENT),
+            Some(ErrorCode::NotFound)
+        );
+    }
+}

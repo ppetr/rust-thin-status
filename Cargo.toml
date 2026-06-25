@@ -15,8 +15,13 @@
 name = "thin-status"
 version = "0.1.0"
 edition = "2021"
-publish = false
-license = "Apache 2.0"
+publish = true
+license-file = "LICENSE"
+description = "Low-overhead, production-grade error status type for Rust, heavily inspired by Abseil's absl::Status"
+readme = "README.md"
+homepage = "https://github.com/ppetr/rust-thin-status"
+keywords = ["status", "error", "rpc", "grpc", "allocation", "optimization"]
+categories = ["asynchronous", "network-programming", "rust-patterns"]
 
 [dependencies]
 strum = { version = "0.27", features = ["derive"] }
@@ -30,7 +35,3 @@ default = ["use_libc"]
 use_libc = ["dep:libc"]
 use_any = ["dep:google-cloud-wkt"]
 use_cloud_rpc = ["use_any", "dep:google-cloud-rpc"]
-
-[build-dependencies]
-#prost = "0.14.4"
-#prost-build = "0.14.4"

@@ -48,8 +48,8 @@ impl TryFrom<FullStatus> for IsizeInPtr {
     }
 }
 
-/// Holds a status code (in most cases `ErrorCode`), a descriptive string message, and optionally
-/// (if enabled by feature `use_any`) also `[google_cloud_wkt::Any]`.
+/// Holds a non-OK status code (in most cases `ErrorCode`), a descriptive string message, and
+/// optionally (if enabled by feature `use_any`) also `[google_cloud_wkt::Any]`.
 ///
 /// It occupies only a single pointer word, which either wraps a tagged integer code (if there is
 /// neither message nor details), or a `ThinArc` pointer that holds a more complex value.
@@ -361,5 +361,30 @@ mod thin_status_tests {
 
         let _status_different = ThinStatus::from_code(non_zero(13));
         assert_ne!(status1, _status_different);
+    }
+
+    #[cfg(feature = "use_cloud_rpc")]
+    #[test]
+    fn test_cloud_rpc_status_conversions() {
+        assert!(
+            ThinStatus::try_from(cloud_rpc::Status::new()).is_err(),
+            "OK status shouldn't be convertible to ThinStatus"
+        );
+
+        let detail =
+            google_cloud_wkt::Any::from_msg(&google_cloud_wkt::Duration::clamp(123, 456)).unwrap();
+        let status = ThinStatus::builder(status_code::ErrorCode::NotFound)
+            .message("Be yourself! Everyone else is already taken.")
+            .add_detail(detail)
+            .build();
+        assert_eq!(
+            ThinStatus::try_from(cloud_rpc::Status::from(&status)).as_ref(),
+            Ok(&status)
+        );
+
+        assert_eq!(
+            ThinStatus::try_from(&cloud_rpc::Status::from(&status)),
+            Ok(status)
+        );
     }
 }
