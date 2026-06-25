@@ -1,5 +1,7 @@
 # thin-status
 
+*Disclaimer: This is a personal project. The views, code, and opinions expressed here are my own and do not represent those of my current or past employers.*
+
 A low-overhead, production-grade error status type for Rust, heavily inspired
 by [Abseil's `absl::Status`](https://abseil.io/docs/cpp/guides/status).
 
