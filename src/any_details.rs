@@ -30,29 +30,12 @@ pub(crate) mod any {
             &self.details
         }
     }
-
-    impl std::fmt::Display for Details {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            let details = self.get();
-            if details.is_empty() {
-                Ok(())
-            } else {
-                write!(f, " {:?}", &details)
-            }
-        }
-    }
 }
 
 #[cfg(not(feature = "use_any"))]
 pub mod any {
     #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash)]
     pub struct Details;
-
-    impl std::fmt::Display for Details {
-        fn fmt(&self, _f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            Ok(())
-        }
-    }
 
     impl Details {
         pub fn is_empty(&self) -> bool {

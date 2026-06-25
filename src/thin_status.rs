@@ -165,12 +165,6 @@ impl std::fmt::Display for ThinStatus {
         if !msg.is_empty() {
             write!(f, ": {}", msg)?;
         }
-        #[cfg(feature = "use_any")]
-        {
-            if let Some(t) = &self.thin.as_arc() {
-                t.header.header.details.fmt(f)?;
-            }
-        }
         Ok(())
     }
 }
@@ -342,8 +336,8 @@ mod thin_status_tests {
         assert_eq!(status.message(), "");
         assert_eq!(status.details(), vec![detail]);
         assert!(status.thin.has_ref());
-        let formatted = format!("{}", status);
-        assert!(formatted.starts_with("NOT_FOUND [Any("));
+        let formatted = format!("{:#?}", status);
+        assert!(formatted.contains("Any"));
         assert!(formatted.contains("type.googleapis.com/google.protobuf.Duration"));
         assert!(formatted.contains("123"));
     }
