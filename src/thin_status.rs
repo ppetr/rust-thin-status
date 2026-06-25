@@ -13,6 +13,8 @@
 // limitations under the License.
 
 // TODO: Add a feature for google_cloud_rpc::model::Status;
+#[cfg(feature = "use_cloud_rpc")]
+use google_cloud_rpc::model as cloud_rpc;
 use std::error::Error;
 use std::num::NonZeroI32;
 
@@ -131,6 +133,25 @@ impl ThinStatus {
         let &arc = &self.thin.as_arc();
         arc.map_or::<&[google_cloud_wkt::Any], _>(&[], |t| &t.header.header.details.get())
     }
+
+    /// Converts a `ThinStatus` into a `google_cloud_rpc::Status`.
+    #[cfg(feature = "use_cloud_rpc")]
+    pub fn to_cloud_rpc(&self) -> cloud_rpc::Status {
+        self.into()
+    }
+
+    /// If a given `Status` is non-OK, converts it into `ThinStatus`.
+    #[cfg(feature = "use_cloud_rpc")]
+    pub fn try_from_cloud_rpc(status: cloud_rpc::Status) -> Result<Self, ()> {
+        status.try_into()
+    }
+
+    /// If a given `Status` is non-OK, converts it into `ThinStatus`.
+    /// Details of type `google_cloud_wkt.Any` are cloned.
+    #[cfg(feature = "use_cloud_rpc")]
+    pub fn try_from_cloud_rpc_ref(status: &cloud_rpc::Status) -> Result<Self, ()> {
+        status.try_into()
+    }
 }
 
 impl std::fmt::Display for ThinStatus {
@@ -160,6 +181,47 @@ impl Error for ThinStatus {}
 impl From<status_code::ErrorCode> for ThinStatus {
     fn from(code: status_code::ErrorCode) -> Self {
         Self::from_code(NonZeroI32::from(code))
+    }
+}
+
+/// If a given `Status` is non-OK, converts it into `ThinStatus`.
+#[cfg(feature = "use_cloud_rpc")]
+impl TryFrom<cloud_rpc::Status> for ThinStatus {
+    type Error = ();
+
+    fn try_from(status: cloud_rpc::Status) -> Result<Self, ()> {
+        let code: NonZeroI32 = status.code.try_into().map_err(|_| ())?;
+        Ok(Self::builder(code)
+            .message(&status.message)
+            .details(status.details)
+            .build())
+    }
+}
+
+/// If a given `Status` is non-OK, converts it into `ThinStatus`.
+/// Details of type `google_cloud_wkt.Any` are cloned.
+#[cfg(feature = "use_cloud_rpc")]
+impl TryFrom<&cloud_rpc::Status> for ThinStatus {
+    type Error = ();
+
+    fn try_from(status: &cloud_rpc::Status) -> Result<Self, ()> {
+        let code: NonZeroI32 = status.code.try_into().map_err(|_| ())?;
+        Ok(Self::builder(code)
+            .message(&status.message)
+            .details(status.details.clone())
+            .build())
+    }
+}
+
+/// Converts a `ThinStatus` into a `google_cloud_rpc::Status`.
+#[cfg(feature = "use_cloud_rpc")]
+impl From<&ThinStatus> for cloud_rpc::Status {
+    fn from(status: &ThinStatus) -> Self {
+        let mut result = Self::new();
+        result.code = status.code_raw().get();
+        result.message = status.message().to_string();
+        result.details = status.details().to_vec();
+        result
     }
 }
 

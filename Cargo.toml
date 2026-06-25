@@ -22,12 +22,14 @@ license = "Apache 2.0"
 strum = { version = "0.27", features = ["derive"] }
 triomphe = "0.1.15"
 libc = { version = "0.2", optional = true }
+google-cloud-rpc = { version = "1.0", optional = true }
 google-cloud-wkt = { version = "1.0", optional = true }
 
 [features]
 default = ["use_libc"]
 use_libc = ["dep:libc"]
 use_any = ["dep:google-cloud-wkt"]
+use_cloud_rpc = ["use_any", "dep:google-cloud-rpc"]
 
 [build-dependencies]
 #prost = "0.14.4"
