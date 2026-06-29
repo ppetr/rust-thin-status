@@ -14,6 +14,7 @@
 
 #[cfg(feature = "use_libc")]
 use libc;
+use std::fmt::Display;
 use std::num::NonZeroI32;
 use strum;
 
@@ -32,7 +33,6 @@ use strum;
     Ord,
     PartialEq,
     PartialOrd,
-    strum::Display,
     strum::EnumString,
     strum::EnumIter,
     strum::FromRepr,
@@ -288,6 +288,17 @@ impl TryFrom<i32> for ErrorCode {
 
     fn try_from(code: i32) -> Result<Self, ()> {
         Self::from_repr(code).ok_or(())
+    }
+}
+
+/// If the `alternate` flag is set, prints the error code as a number, otherwise as text.
+impl Display for ErrorCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if f.alternate() {
+            write!(f, "{}", *self as i32)
+        } else {
+            f.write_str(self.into())
+        }
     }
 }
 

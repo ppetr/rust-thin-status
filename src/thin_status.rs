@@ -153,7 +153,11 @@ impl ThinStatus {
     }
 }
 
+/// If the contained error code corresponds to an `ErrorCode` (`code()` returns `Some(...)`), it's
+/// printed as an upper-case string (such as `NOT_FOUND`); otherwise just as a number.
+/// This is followed by a colon, space and the contained message (if there is any).
 impl std::fmt::Display for ThinStatus {
+    /// If the `alternate` flag is set, always prints the error code as a number.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let code = self.code_raw().get();
         if let Some(error_code) = status_code::ErrorCode::try_from(code).ok() {
