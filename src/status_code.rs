@@ -100,11 +100,11 @@ pub enum ErrorCode {
     /// Some guidelines that may help a service implementer in deciding between
     /// `FailedPrecondition`, `Aborted`, and `Unavailable`:
     ///
-    ///  (a) Use `Unavailable` if the client can retry just the failing call.
-    ///  (b) Use `Aborted` if the client should retry at a higher transaction level (such as when a
+    ///   1. Use `Unavailable` if the client can retry just the failing call.
+    ///   2. Use `Aborted` if the client should retry at a higher transaction level (such as when a
     ///      client-specified test-and-set fails, indicating the client should restart a
     ///      read-modify-write sequence).
-    ///  (c) Use `FailedPrecondition` if the client should not retry until the system state has
+    ///   3. Use `FailedPrecondition` if the client should not retry until the system state has
     ///      been explicitly fixed. For example, if a "rmdir" fails because the directory is
     ///      non-empty, `FailedPrecondition` should be returned since the client should not retry
     ///      unless the files are deleted from the directory.
@@ -262,7 +262,7 @@ impl ErrorCode {
         }
     }
 
-    /// If `err` contains a `raw_os_error()`, return it converted into an `ErrorCode`.
+    /// If `err` contains a `raw_os_error()`, returns it converted into an `ErrorCode`.
     /// Otherwise returns `None`.
     #[cfg(feature = "use_libc")]
     pub fn from_raw_os_error(err: &std::io::Error) -> Option<ErrorCode> {
