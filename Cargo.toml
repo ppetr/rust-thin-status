@@ -30,6 +30,9 @@ libc = { version = "0.2", optional = true }
 google-cloud-rpc = { version = "1.0", optional = true }
 google-cloud-wkt = { version = "1.0", optional = true }
 
+[dev-dependencies]
+anyhow = "1.0.51"
+
 [features]
 default = ["use_libc"]
 use_libc = ["dep:libc"]

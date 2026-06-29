@@ -294,6 +294,7 @@ impl TryFrom<i32> for ErrorCode {
 #[cfg(test)]
 mod thin_status_tests {
     use super::*;
+    use anyhow;
 
     #[cfg(feature = "use_libc")]
     #[test]
@@ -302,6 +303,21 @@ mod thin_status_tests {
         assert_eq!(
             ErrorCode::from_errno(libc::ENOENT),
             Some(ErrorCode::NotFound)
+        );
+    }
+
+    #[test]
+    fn test_to_string() {
+        assert_eq!(format!("{}", ErrorCode::NotFound), "NOT_FOUND");
+        assert_eq!(format!("{:#}", ErrorCode::NotFound), "5");
+    }
+
+    #[test]
+    fn test_anyhow_context() {
+        let err = anyhow::anyhow!("test error").context(ErrorCode::PermissionDenied);
+        assert_eq!(
+            err.downcast_ref::<ErrorCode>(),
+            Some(&ErrorCode::PermissionDenied)
         );
     }
 }
