@@ -15,6 +15,7 @@
 #[cfg(feature = "use_cloud_rpc")]
 use google_cloud_rpc::model as cloud_rpc;
 use std::error::Error;
+use std::fmt::Display;
 use std::num::NonZeroI32;
 
 use crate::any_details::any::Details;
@@ -156,7 +157,7 @@ impl ThinStatus {
 /// If the contained error code corresponds to an `ErrorCode` (`code()` returns `Some(...)`), it's
 /// printed as an upper-case string (such as `NOT_FOUND`); otherwise just as a number.
 /// This is followed by a colon, space and the contained message (if there is any).
-impl std::fmt::Display for ThinStatus {
+impl Display for ThinStatus {
     /// If the `alternate` flag is set, always prints the error code as a number.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let code = self.code_raw().get();
@@ -253,7 +254,7 @@ mod thin_status_tests {
     fn test_from_error_code_raw() {
         // Values exactly at the boundary and within MAX_THIN should not allocate a ThinArc.
         let status: ThinStatus = status_code::ErrorCode::NotFound.into();
-        assert_eq!(<NonZeroI32 as Into<i32>>::into(status.code_raw()), 5);
+        assert_eq!(i32::from(status.code_raw()), 5);
         assert_eq!(status.message(), "");
         #[cfg(feature = "use_any")]
         assert_eq!(status.details(), &[]);
@@ -318,7 +319,7 @@ mod thin_status_tests {
         let mut builder = ThinStatus::builder(status_code::ErrorCode::NotFound);
         write!(builder, "message").expect("write! failed");
         let status = builder.build();
-        assert_eq!(<NonZeroI32 as Into<i32>>::into(status.code_raw()), 5);
+        assert_eq!(i32::from(status.code_raw()), 5);
         assert_eq!(status.code(), Some(status_code::ErrorCode::NotFound));
         assert_eq!(status.code_or_unknown(), status_code::ErrorCode::NotFound);
         assert_eq!(status.message(), "message");
@@ -336,7 +337,7 @@ mod thin_status_tests {
         let status = ThinStatus::builder(status_code::ErrorCode::NotFound)
             .add_detail(detail.clone())
             .build();
-        assert_eq!(<NonZeroI32 as Into<i32>>::into(status.code_raw()), 5);
+        assert_eq!(i32::from(status.code_raw()), 5);
         assert_eq!(status.message(), "");
         assert_eq!(status.details(), vec![detail]);
         assert!(status.thin.has_ref());
@@ -384,5 +385,41 @@ mod thin_status_tests {
             ThinStatus::try_from(&cloud_rpc::Status::from(&status)),
             Ok(status)
         );
+    }
+}
+
+trait ThinStatusExtSealed {}
+
+#[allow(private_bounds)]
+pub trait ThinStatusExt : ThinStatusExtSealed {
+    fn error_code_builder(&self, code: status_code::ErrorCode) -> builder::ThinStatusBuilder<'_>;
+
+    fn error_code(&self, code: status_code::ErrorCode) -> ThinStatus {
+        self.error_code_builder(code).build()
+    }
+}
+
+impl<M: Display> ThinStatusExtSealed for M {}
+
+impl<M: Display> ThinStatusExt for M {
+    fn error_code_builder(&self, code: status_code::ErrorCode) -> builder::ThinStatusBuilder<'_> {
+        ThinStatus::builder(code).message(self.to_string())
+    }
+
+    fn error_code(&self, code: status_code::ErrorCode) -> ThinStatus {
+        self.error_code_builder(code).build()
+    }
+}
+
+#[cfg(test)]
+mod thin_status_ext_tests {
+    use super::*;
+
+    #[test]
+    fn test_from_error_code_and_message() {
+        let status = "message".error_code(status_code::ErrorCode::NotFound);
+        assert_eq!(i32::from(status.code_raw()), 5);
+        assert_eq!(status.code(), Some(status_code::ErrorCode::NotFound));
+        assert_eq!(status.message(), "message");
     }
 }

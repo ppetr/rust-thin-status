@@ -43,8 +43,8 @@ impl<'a> ThinStatusBuilder<'a> {
 
     /// Sets the message to `message`, discarding any previous one. The builder captures only a
     /// reference to it to avoid copying.
-    pub fn message(mut self, message: &'a str) -> Self {
-        self.message = Cow::Borrowed(message);
+    pub fn message<S: Into<Cow<'a, str>> + ?Sized>(mut self, message: S) -> Self {
+        self.message = message.into();
         self
     }
 
